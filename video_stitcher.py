@@ -8,31 +8,45 @@ import numpy.linalg as linalg
 import cv2.cv as cv
 import numpy as np
 import math
-from multiprocessing import Pool
 from functools import partial
-from itertools import islice
-import time
-os.chdir(os.getcwd())
 
 
 # Script Parameters
-
+# working codecs; but none of them seem to work for full-size videos
+# 10 frames: 41,376kb
 # CODEC = cv2.cv.CV_FOURCC('I', '4', '2', '0')
-# CODEC = cv2.cv.CV_FOURCC('A', 'V', 'C', '1')
-# CODEC = cv2.cv.CV_FOURCC('Y', 'U', 'V', '1')
-# CODEC = cv2.cv.CV_FOURCC('P', 'I', 'M', '1')
+# 10 frames: 2,544kb
 # CODEC = cv2.cv.CV_FOURCC('M', 'J', 'P', 'G')
-# CODEC = cv2.cv.CV_FOURCC('D', 'I', 'V', '3')
-# CODEC = cv2.cv.CV_FOURCC('D', 'I', 'V', 'X')
-# CODEC = cv2.cv.CV_FOURCC('U', '2', '6', '3')
-# CODEC = cv2.cv.CV_FOURCC('I', '2', '6', '3')
+# 10 frames: 596kb
 # CODEC = cv2.cv.CV_FOURCC('F', 'L', 'V', '1')
-# CODEC = cv2.cv.CV_FOURCC('H', '2', '6', '4')
+# 10 frames: 536kb
+# CODEC = cv2.cv.CV_FOURCC('D', 'I', 'V', '3')
+# 10 frames: 534kb
+# CODEC = cv2.cv.CV_FOURCC('D', 'I', 'V', 'X')
+# 10 frames: 528kb
+CODEC = cv2.cv.CV_FOURCC('M', 'P', '4', '2')
+
+# non-working
+# 0kb output
 # CODEC = cv2.cv.CV_FOURCC('A', 'Y', 'U', 'V')
 # CODEC = cv2.cv.CV_FOURCC('I', 'U', 'Y', 'V')
+# CODEC = cv2.cv.CV_FOURCC('Y', 'U', 'V', '1')
 
-#CODEC = cv2.cv.CV_FOURCC('M', 'P', '4', '2')
-CODEC = -1
+# encoder id 28 not found
+# CODEC = cv2.cv.CV_FOURCC('A', 'V', 'C', '1')
+# CODEC = cv2.cv.CV_FOURCC('H', '2', '6', '4')
+
+# encoder id 21 not found
+# CODEC = cv2.cv.CV_FOURCC('I', '2', '6', '3')
+
+# throws resolution error: MPEG-1 does not support resolutions above 4095x4095
+# CODEC = cv2.cv.CV_FOURCC('P', 'I', 'M', '1')
+
+# throws resolution error:  H.263 does not support resolutions above 2048x1152
+# CODEC = cv2.cv.CV_FOURCC('U', '2', '6', '3')
+
+
+# CODEC = -1
 HEURISTIC_VERTICAL_CROPPING = True
 RESIZE_FACTOR = 0.5
 WRITE_DEBUG_FRAME = True
@@ -45,11 +59,11 @@ RIGHT_VIDEO_FILENAME = 'media/football_right.mp4'
 
 def make_synced_vid_iterator(left_camera_stream, middle_camera_stream, right_camera_stream):
     i = 1
-    # while left_camera_stream.isOpened():
+
     while i <= left_camera_stream.get(cv.CV_CAP_PROP_FRAME_COUNT) \
-            and i <= middle_camera_stream.get(cv.CV_CAP_PROP_FRAME_COUNT)\
-            and i <= right_camera_stream.get(cv.CV_CAP_PROP_FRAME_COUNT):
-    #while i <= 10:
+           and i <= middle_camera_stream.get(cv.CV_CAP_PROP_FRAME_COUNT)\
+           and i <= right_camera_stream.get(cv.CV_CAP_PROP_FRAME_COUNT):
+    # while i <= 10:
         _, left_frame = left_camera_stream.read()
         _, mid_frame = middle_camera_stream.read()
         _, right_frame = right_camera_stream.read()
@@ -219,9 +233,9 @@ def warp_images(base_image, next_image, img_h, img_w, mod_inv_h, move_h):
     return final_img
 
 
-def process_frame(left, mid, right, index, final, final_size, image_height, intermediate, original_translation, source):
-    print "Processing frame: " + str(index) + "/" + str(
-        int(source['left'].get(cv.CV_CAP_PROP_FRAME_COUNT))) + "...",
+def process_frame(left, mid, right, index, final=None, final_size=None, image_height=None, intermediate=None,
+                  original_translation=None, total_frames=None):
+    print "Processing frame: " + str(index) + "/" + str(total_frames) + "...",
     intermediate_img = warp_images(mid, left, intermediate['img_h'], intermediate['img_w'],
                                    intermediate['mod_inv_h'],
                                    intermediate['move_h'])
@@ -237,6 +251,7 @@ def process_frame(left, mid, right, index, final, final_size, image_height, inte
 
 
 def main():
+    os.chdir(os.getcwd())
     # specify the sources
     source = dict()
     source['left'] = cv2.VideoCapture(LEFT_VIDEO_FILENAME)
@@ -244,15 +259,18 @@ def main():
     source['right'] = cv2.VideoCapture(RIGHT_VIDEO_FILENAME)
 
     synced_vid_iterator = make_synced_vid_iterator(source['left'], source['mid'], source['right'])
-    left, mid, right, index = synced_vid_iterator.next()
 
+    # We need to calculate the transforms that we will be applying to the first frame.
+    # Because the cameras don't move, we can reuse those transforms for the subsequent frames
+    left, mid, right, index = synced_vid_iterator.next()
     print "Calculating per-frame transforms and processing frame " + str(index) + "...",
 
-    # Get transform data from each stitch
+    # Calculate transform data from each stitch
+    # Data for each stitch is stored into 'intermediate' and 'final' as dict values
     intermediate = stitch(mid, left)
     final = stitch(intermediate['image'], right)
 
-    # Calculate translation of middle image
+    # Calculate vertical translation of middle image
     original_translation = intermediate['move_y'] + final['move_y']
     image_height = source['left'].get(cv.CV_CAP_PROP_FRAME_HEIGHT)
 
@@ -264,6 +282,8 @@ def main():
 
     # Get final size to be used for resizing (if at all)
     final_size = tuple((np.array(final_img.shape)[:2] * RESIZE_FACTOR).astype(int)[::-1])
+
+    # Resize to make smaller since I cannot yet find a codec that works with the full video
     final_img = cv2.resize(final_img, final_size)
 
     if WRITE_DEBUG_FRAME is True:
@@ -271,6 +291,8 @@ def main():
     print "Done."
 
     print "Initializing video writer...",
+    if os.path.isfile(OUTPUT_VIDEO_FILENAME):
+        os.remove(OUTPUT_VIDEO_FILENAME)
     out = cv2.VideoWriter(OUTPUT_VIDEO_FILENAME, CODEC, source['left'].get(cv.CV_CAP_PROP_FPS), final_size)
     print "Done."
 
@@ -279,9 +301,11 @@ def main():
     out.write(final_img)
     print "Done."
     print "Applying transforms to subsequent frames."
+    total_frames = int(source['left'].get(cv.CV_CAP_PROP_FRAME_COUNT))
     simplified_process_frame = partial(process_frame, final=final, final_size=final_size, image_height=image_height,
                                        intermediate=intermediate, original_translation=original_translation,
-                                       source=source)
+                                       total_frames=total_frames)
+
     for left, mid, right, index in synced_vid_iterator:
         final_img = simplified_process_frame(left, mid, right, index)
         print "Writing frame " + str(index) + "...",
