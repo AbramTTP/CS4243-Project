@@ -81,11 +81,13 @@ def filter_matches(matches, ratio=0.7):
 
 
 def find_dimensions(image, homography):
+    # initialize an array of [1,1,1]
     base_p1 = np.ones(3, np.float32)
     base_p2 = np.ones(3, np.float32)
     base_p3 = np.ones(3, np.float32)
     base_p4 = np.ones(3, np.float32)
 
+    # modify value at index 0 and 1 (excluding 2)
     (y, x) = image.shape[:2]
 
     base_p1[:2] = [0, 0]
